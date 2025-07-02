@@ -4,6 +4,9 @@ on:
   push:
     branches: [ "main" ]
 
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -74,4 +77,3 @@ jobs:
         git add xray-scan-report.json
         git commit -m "Add Xray scan report"
         git push
-
