@@ -117,18 +117,20 @@ jobs:
              -H "Content-Type: application/json" \
              -X POST "$XRAY_SUMMARY_URL" \
              -d "{\"paths\":[\"${PATH_STRING}\"]}" \
-             -o xray-scan-report.json
+             -o .github/xray-scan-report.json
+
 
         # Simple sanity check
-        grep -q '"issues"' xray-scan-report.json || \
-          { echo "Summary missing 'issues' section"; cat xray-scan-report.json; exit 1; }
+        grep -q '"issues"' .github/xray-scan-report.json || \
+          { echo "Summary missing 'issues' section"; cat .github/xray-scan-report.json; exit 1; }
 
 
     - name: Commit & push xray-scan-report.json (if changed)
       run: |
         git config user.name  "github-actions"
         git config user.email "actions@github.com"
-        git add xray-scan-report.json
+        git add .github/xray-scan-report.json
+
         if git diff --cached --quiet; then
           echo "No changes to commit."
         else
