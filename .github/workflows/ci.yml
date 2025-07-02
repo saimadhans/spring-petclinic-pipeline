@@ -129,7 +129,7 @@ jobs:
       run: |
         git config user.name  "github-actions"
         git config user.email "actions@github.com"
-        git add xray-scan-report.json
+        git add .github/xray-scan-report.json
         if git diff --cached --quiet; then
           echo "No changes to commit."
         else
