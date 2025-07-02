@@ -12,119 +12,106 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      JFROG_URL:      ${{ secrets.JFROG_URL }}         # https://<domain>.jfrog.io
+      JFROG_URL:      ${{ secrets.JFROG_URL }}      
       JFROG_USERNAME: ${{ secrets.JFROG_USERNAME }}
       JFROG_PASSWORD: ${{ secrets.JFROG_PASSWORD }}
-      MAVEN_REPO:     ${{ secrets.MAVEN_REPO }}        # libs-release-remote (example)
-      DOCKER_REPO:    ${{ secrets.DOCKER_REPO }}       # docker-local (example)
-      XRAY_PROJECT:   ${{ secrets.JFROG_PROJECT }}     # leave blank if not using Xray Projects
+      MAVEN_REPO:     ${{ secrets.MAVEN_REPO }}     
+      DOCKER_REPO:    ${{ secrets.DOCKER_REPO }}   
+      XRAY_PROJECT:   ${{ secrets.JFROG_PROJECT }} 
 
     steps:
-    - name: Checkout code
+    - name: Checkout source
       uses: actions/checkout@v3
 
-    - name: Set up Java
+    - name: Set up Temurin 17
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: 17
 
-    - name: Cache Maven packages
+    - name: Cache Maven deps
       uses: actions/cache@v3
       with:
         path: ~/.m2
-        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-        restore-keys: ${{ runner.os }}-maven-
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2-
 
-    - name: Build and test with Maven (resolving from JFrog)
+    - name: Build with Maven (resolving via Artifactory)
       run: |
         mkdir -p ~/.m2
         cp .jfrog/settings.xml ~/.m2/settings.xml
-        ./mvnw clean package -DskipTests
+        ./mvnw -B clean verify           # run tests; drop -DskipTests if you really need them skipped
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Extract JFrog hostname for Docker tag
-      run: echo "JFROG_REGISTRY=${JFROG_URL#https://}" >> "$GITHUB_ENV"
-
-    - name: Build Docker image
+    - name: Define image tag
       run: |
-        docker build -t "$JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest" .
+        echo "JFROG_REGISTRY=${JFROG_URL#https://}" >> "$GITHUB_ENV"
+        echo "IMAGE=${JFROG_REGISTRY}/${DOCKER_REPO}/spring-petclinic:latest" >> "$GITHUB_ENV"
 
-    - name: Log in to JFrog Docker repo
+    - name: Build image
+      run: docker build -t "$IMAGE" .
+
+    - name: Log in to Artifactory Docker repo
       run: |
         echo "$JFROG_PASSWORD" | docker login "$JFROG_REGISTRY" -u "$JFROG_USERNAME" --password-stdin
 
-    # ------------ push image and capture digest ------------
-    - name: Push Docker image to JFrog Artifactory
+    - name: Push image and capture digest
       id: push_image
       run: |
-        digest=$(docker push "$JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest" | awk '/^digest:/ {print $2}')
+        digest=$(docker push "$IMAGE" | grep -m 1 'digest:' | awk '{print $3}')
         echo "DIGEST=$digest" >> "$GITHUB_ENV"
         echo "Image digest: $digest"
 
-    # ------------ wait for Xray to finish scanning the image ------------
-    - name: Wait for Xray scan to finish
+    - name: Poll Xray until scan DONE
       env:
         XRAY_STATUS_URL: ${{ env.JFROG_URL }}/xray/api/v1/artifact/status
       run: |
-        ARTIFACT_PATH="default/${DOCKER_REPO}/spring-petclinic/manifests/${DIGEST}"
+        sudo apt-get -qq update && sudo apt-get -qq install -y jq
         for i in {1..20}; do
-          echo "Polling Xray scan status, attempt ${i}"
+          echo "⏳  Scan status check $i/20"
           if [ -n "$XRAY_PROJECT" ]; then
             PROJECT_HEADER=(-H "X-JFrog-Project-Id: $XRAY_PROJECT")
           else
             PROJECT_HEADER=()
           fi
-          STATUS=$(curl -s -u "${JFROG_USERNAME}:${JFROG_PASSWORD}" \
+          status=$(curl -s -u "$JFROG_USERNAME:$JFROG_PASSWORD" \
                      "${PROJECT_HEADER[@]}" \
                      -H "Content-Type: application/json" \
                      -X POST "$XRAY_STATUS_URL" \
-                     -d "{\"path\":\"${ARTIFACT_PATH}\"}" | jq -r '.status // empty')
-          echo "Current status: ${STATUS:-null}"
-          if [ "$STATUS" = "DONE" ]; then
-            echo "Scan completed."
-            break
-          fi
+                     -d "{\"repo\":\"$DOCKER_REPO\",\"path\":\"spring-petclinic/latest/manifest.json\"}" \
+                     | jq -r '.status // empty')
+          echo "    current status: ${status:-null}"
+          [ "$status" = "DONE" ] && { echo "Xray scan complete"; break; }
           sleep 30
         done
-        if [ "$STATUS" != "DONE" ]; then
-          echo "Xray scan did not finish in time." >&2
-          exit 1
-        fi
+        [ "$status" = "DONE" ] || { echo "Xray scan timed out"; exit 1; }
 
-    # ------------ download the finished component summary ------------
-    - name: Download Xray scan summary
+    - name: Fetch Xray artifact summary JSON
       env:
-        XRAY_SUMMARY_URL: ${{ env.JFROG_URL }}/xray/api/v1/summary/component
-        COMPONENT_ID:     docker://${{ env.DOCKER_REPO }}/spring-petclinic:latest
+        XRAY_SUMMARY_URL: ${{ env.JFROG_URL }}/xray/api/v1/summary/artifact
       run: |
         if [ -n "$XRAY_PROJECT" ]; then
           PROJECT_HEADER=(-H "X-JFrog-Project-Id: $XRAY_PROJECT")
         else
           PROJECT_HEADER=()
         fi
-        curl -s -u "${JFROG_USERNAME}:${JFROG_PASSWORD}" \
+        PATH_STRING="default/${DOCKER_REPO}/spring-petclinic/latest/manifest.json"
+        curl -s -u "$JFROG_USERNAME:$JFROG_PASSWORD" \
              "${PROJECT_HEADER[@]}" \
              -H "Content-Type: application/json" \
              -X POST "$XRAY_SUMMARY_URL" \
-             -d "{\"component_details\":[{\"component_id\":\"${COMPONENT_ID}\",\"package_type\":\"Docker\"}]}" \
+             -d "{\"paths\":[\"${PATH_STRING}\"]}" \
              -o xray-scan-report.json
-        if ! grep -q '"components"' xray-scan-report.json; then
-          echo "Xray summary does not contain expected data." >&2
-          cat xray-scan-report.json
-          exit 1
-        fi
+        grep -q '"issues"' xray-scan-report.json || { echo "summary missing data"; cat xray-scan-report.json; exit 1; }
 
-    - name: Commit and push Xray scan report if it changed
+
+
+    - name: Commit ⇢ xray-scan-report.json (if changed)
       run: |
-        git config user.name "github-actions"
+        git config user.name  "github-actions"
         git config user.email "actions@github.com"
         git add xray-scan-report.json
-        if git diff --cached --quiet; then
-          echo "No changes to commit."
-        else
-          git commit -m "ci: update Xray scan summary"
-          git push
-        fi
+        git diff --cached --quiet && echo "No changes" || { \
+          git commit -m "ci: update Xray scan summary" && git push; }
