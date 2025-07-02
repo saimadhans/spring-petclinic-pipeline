@@ -4,9 +4,6 @@ on:
   push:
     branches: [ "main" ]
 
-permissions:
-  contents: write
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -59,15 +56,17 @@ jobs:
       run: |
         docker push $JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest
 
-    - name: Export SBOM and trigger Xray scan
+    - name: Download Xray scan summary
       run: |
         curl -u $JFROG_USERNAME:$JFROG_PASSWORD \
-          "$JFROG_URL/xray/api/v1/scanArtifact" \
-          -X POST \
+          -X POST "$JFROG_URL/xray/api/v2/summary/component" \
           -H "Content-Type: application/json" \
           -d '{
-              "component_id": "docker://'"$DOCKER_REPO/spring-petclinic:latest"'"
-            }' \
+            "component_details": [{
+              "component_id": "docker://'"$DOCKER_REPO/spring-petclinic:latest"'",
+              "package_type": "Docker"
+            }]
+          }' \
           -o xray-scan-report.json
 
     - name: Commit and push Xray scan report
@@ -75,5 +74,5 @@ jobs:
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add xray-scan-report.json
-        git commit -m "Add Xray scan report"
+        git commit -m "Add Xray scan summary report"
         git push
