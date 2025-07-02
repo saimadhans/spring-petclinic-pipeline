@@ -47,8 +47,8 @@ jobs:
     - name: Build with Maven (resolve via Artifactory)
       run: |
         mkdir -p ~/.m2
-        cp .jfrog/settings.xml ~/.m2/settings.xml   # settings.xml has <servers>/<mirrors> for Artifactory
-        ./mvnw -B clean verify                      # run tests; drop 'verify' or add -DskipTests if needed
+        cp .jfrog/settings.xml ~/.m2/settings.xml
+        ./mvnw -B clean verify                    # add -DskipTests if you need to skip tests
 
     # ─────────── Build & push container ───────────
     - name: Set up Docker Buildx
@@ -60,7 +60,7 @@ jobs:
         JFROG_REGISTRY="${JFROG_URL#https://}"
         echo "JFROG_REGISTRY=$JFROG_REGISTRY" >> "$GITHUB_ENV"
 
-        # Use a mutable 'latest' tag; change if you prefer sha‑based tags
+        # Mutable 'latest' tag; change to ${{ github.sha }} if you prefer immutable tags
         echo "IMAGE=${JFROG_REGISTRY}/${DOCKER_REPO}/spring-petclinic:latest" >> "$GITHUB_ENV"
 
     - name: Build Docker image
@@ -74,10 +74,13 @@ jobs:
     - name: Push image and capture digest
       id: push_image
       run: |
-        # 'docker push' prints 'digest: sha256:…' once the upload finishes
-        digest=$(docker push "$IMAGE" | grep -m 1 '^digest:' | awk '{print $2}')
+        docker push "$IMAGE"
+
+        # docker inspect always contains the digest the registry returned
+        digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" | cut -d'@' -f2)
+
         if [ -z "$digest" ]; then
-          echo "Digest not captured"; exit 1
+          echo "❌  Unable to obtain image digest"; exit 1
         fi
         echo "DIGEST=$digest" >> "$GITHUB_ENV"
         echo "Image digest: $digest"
@@ -92,7 +95,6 @@ jobs:
         for i in {1..20}; do
           printf "⏳  Xray scan status check %d/20 …\n" "$i"
 
-          # Add project header only when a project key is supplied
           [[ -n "$XRAY_PROJECT" ]] && PROJECT_HEADER=(-H "X-JFrog-Project-Id: $XRAY_PROJECT") || PROJECT_HEADER=()
 
           status=$(curl -s -u "$JFROG_USERNAME:$JFROG_PASSWORD" \
