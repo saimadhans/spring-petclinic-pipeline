@@ -40,15 +40,21 @@ jobs:
     - name: Set up Docker
       uses: docker/setup-buildx-action@v3
 
+    - name: Extract JFrog hostname for Docker tag
+      run: |
+        echo "JFROG_REGISTRY=${JFROG_URL#https://}" >> $GITHUB_ENV
+
     - name: Build Docker image
       run: |
-        docker build -t $JFROG_URL/artifactory/$DOCKER_REPO/spring-petclinic:latest .
+        docker build -t $JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest .
 
     - name: Log in to JFrog Docker repo
-      run: echo $JFROG_PASSWORD | docker login $JFROG_URL/artifactory/$DOCKER_REPO --username $JFROG_USERNAME --password-stdin
+      run: |
+        echo $JFROG_PASSWORD | docker login $JFROG_REGISTRY -u $JFROG_USERNAME --password-stdin
 
     - name: Push Docker image to JFrog Artifactory
-      run: docker push $JFROG_URL/artifactory/$DOCKER_REPO/spring-petclinic:latest
+      run: |
+        docker push $JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest
 
     - name: Export SBOM and trigger Xray scan
       run: |
