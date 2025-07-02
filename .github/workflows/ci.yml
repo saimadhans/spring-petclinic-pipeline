@@ -72,10 +72,15 @@ jobs:
           }' \
           -o xray-scan-report.json
 
-    - name: Commit and push Xray scan report
+    - name: Commit and push Xray scan report if it changed
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add xray-scan-report.json
-        git commit -m "Add Xray scan summary report"
-        git push
+        if git diff --cached --quiet; then
+          echo "No changes to commit."
+        else
+          git commit -m "Update Xray scan report"
+          git push
+        fi
+
