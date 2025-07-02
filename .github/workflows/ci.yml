@@ -1,0 +1,62 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      JFROG_URL: ${{ secrets.JFROG_URL }}
+      JFROG_USERNAME: ${{ secrets.JFROG_USERNAME }}
+      JFROG_PASSWORD: ${{ secrets.JFROG_PASSWORD }}
+      MAVEN_REPO: ${{ secrets.MAVEN_REPO }}
+      DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: temurin
+        java-version: 17
+
+    - name: Cache Maven packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-maven-
+
+    - name: Build and test with Maven using JFrog remote repo
+      run: |
+        mkdir -p ~/.m2
+        cp .jfrog/settings.xml ~/.m2/settings.xml
+        ./mvnw clean package -DskipTests
+
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      run: |
+        docker build -t $JFROG_URL/artifactory/$DOCKER_REPO/spring-petclinic:latest .
+
+    - name: Log in to JFrog Docker repo
+      run: echo $JFROG_PASSWORD | docker login $JFROG_URL/artifactory/$DOCKER_REPO --username $JFROG_USERNAME --password-stdin
+
+    - name: Push Docker image to JFrog Artifactory
+      run: docker push $JFROG_URL/artifactory/$DOCKER_REPO/spring-petclinic:latest
+
+    - name: Export SBOM and trigger Xray scan
+      run: |
+        curl -u $JFROG_USERNAME:$JFROG_PASSWORD \
+          "$JFROG_URL/xray/api/v1/scanArtifact" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d '{
+              "component_id": "docker://'"$DOCKER_REPO/spring-petclinic:latest"'"
+            }' \
+          -o xray-scan-report.json
