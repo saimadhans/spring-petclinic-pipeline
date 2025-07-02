@@ -1,1 +1,1 @@
-404 page not found
+{"artifacts":[{"general":{"component_id":"docker-local/spring-petclinic:latest"},"issues":[],"licenses":[{"name":"Unknown","full_name":"Unknown license","components":["docker://docker-local/spring-petclinic:latest"]}],"operational_risks":[]}]}
