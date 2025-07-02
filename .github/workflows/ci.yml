@@ -66,3 +66,12 @@ jobs:
               "component_id": "docker://'"$DOCKER_REPO/spring-petclinic:latest"'"
             }' \
           -o xray-scan-report.json
+
+    - name: Commit and push Xray scan report
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git add xray-scan-report.json
+        git commit -m "Add Xray scan report"
+        git push
+
