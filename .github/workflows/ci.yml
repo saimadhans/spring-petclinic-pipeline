@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 permissions:
   contents: write
@@ -12,11 +12,12 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      JFROG_URL:        ${{ secrets.JFROG_URL }}        
-      JFROG_USERNAME:   ${{ secrets.JFROG_USERNAME }}
-      JFROG_PASSWORD:   ${{ secrets.JFROG_PASSWORD }}
-      MAVEN_REPO:       ${{ secrets.MAVEN_REPO }}      
-      DOCKER_REPO:      ${{ secrets.DOCKER_REPO }}    
+      JFROG_URL:      ${{ secrets.JFROG_URL }}         # https://<domain>.jfrog.io
+      JFROG_USERNAME: ${{ secrets.JFROG_USERNAME }}
+      JFROG_PASSWORD: ${{ secrets.JFROG_PASSWORD }}
+      MAVEN_REPO:     ${{ secrets.MAVEN_REPO }}        # libs-release-remote (example)
+      DOCKER_REPO:    ${{ secrets.DOCKER_REPO }}       # docker-local (example)
+      XRAY_PROJECT:   ${{ secrets.JFROG_PROJECT }}     # leave blank if not using Xray Projects
 
     steps:
     - name: Checkout code
@@ -45,45 +46,70 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Extract JFrog hostname for Docker tag
-      run: echo "JFROG_REGISTRY=${JFROG_URL#https://}" >> $GITHUB_ENV
+      run: echo "JFROG_REGISTRY=${JFROG_URL#https://}" >> "$GITHUB_ENV"
 
     - name: Build Docker image
       run: |
-        docker build -t $JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest .
+        docker build -t "$JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest" .
 
     - name: Log in to JFrog Docker repo
       run: |
-        echo $JFROG_PASSWORD | docker login $JFROG_REGISTRY -u $JFROG_USERNAME --password-stdin
+        echo "$JFROG_PASSWORD" | docker login "$JFROG_REGISTRY" -u "$JFROG_USERNAME" --password-stdin
 
     - name: Push Docker image to JFrog Artifactory
       run: |
-        docker push $JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest
+        docker push "$JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest"
 
-    - name: Download Xray scan summary (poll until ready)
+    # ---------- wait for Xray to finish scanning the image ----------
+    - name: Wait for Xray scan to finish
       env:
-        XRAY_SUMMARY_URL: ${{ env.JFROG_URL }}/xray/api/v1/summary/component
-        COMPONENT_ID: docker://${{ env.DOCKER_REPO }}/spring-petclinic:latest
+        XRAY_STATUS_URL: ${{ env.JFROG_URL }}/xray/api/v1/artifact/status
+        ARTIFACT_PATH:   default/${{ env.DOCKER_REPO }}/spring-petclinic/manifests/latest
       run: |
-        for i in {1..10}; do
-          echo "Attempt $i – querying Xray for ${COMPONENT_ID}"
-          curl -s -u "${JFROG_USERNAME}:${JFROG_PASSWORD}" \
-               -H "Content-Type: application/json" \
-               -X POST "${XRAY_SUMMARY_URL}" \
-               -d "{\"component_details\":[{\"component_id\":\"${COMPONENT_ID}\",\"package_type\":\"Docker\"}]}" \
-               -o xray-scan-report.json
-
-          if grep -q '"components"' xray-scan-report.json && \
-             ! grep -q '"Component not found"' xray-scan-report.json; then
-            echo "Scan report ready."
+        for i in {1..20}; do
+          echo "Polling Xray scan status, attempt ${i}"
+          if [ -n "$XRAY_PROJECT" ]; then
+            PROJECT_HEADER=(-H "X-JFrog-Project-Id: $XRAY_PROJECT")
+          else
+            PROJECT_HEADER=()
+          fi
+          STATUS=$(curl -s -u "${JFROG_USERNAME}:${JFROG_PASSWORD}" \
+                     "${PROJECT_HEADER[@]}" \
+                     -H "Content-Type: application/json" \
+                     -X POST "$XRAY_STATUS_URL" \
+                     -d "{\"path\":\"${ARTIFACT_PATH}\"}" | jq -r '.status')
+          echo "Current status: ${STATUS}"
+          if [ "${STATUS}" = "DONE" ]; then
+            echo "Scan completed."
             break
           fi
-
-          echo "Report not ready yet, waiting 30s…"
           sleep 30
         done
+        if [ "${STATUS}" != "DONE" ]; then
+          echo "Xray scan did not finish in time." >&2
+          exit 1
+        fi
 
-        if ! grep -q '"components"' xray-scan-report.json ; then
-          echo "Xray summary not available after 10 attempts." >&2
+    # ---------- download the finished component summary ----------
+    - name: Download Xray scan summary
+      env:
+        XRAY_SUMMARY_URL: ${{ env.JFROG_URL }}/xray/api/v1/summary/component
+        COMPONENT_ID:     docker://${{ env.DOCKER_REPO }}/spring-petclinic:latest
+      run: |
+        if [ -n "$XRAY_PROJECT" ]; then
+          PROJECT_HEADER=(-H "X-JFrog-Project-Id: $XRAY_PROJECT")
+        else
+          PROJECT_HEADER=()
+        fi
+        curl -s -u "${JFROG_USERNAME}:${JFROG_PASSWORD}" \
+             "${PROJECT_HEADER[@]}" \
+             -H "Content-Type: application/json" \
+             -X POST "$XRAY_SUMMARY_URL" \
+             -d "{\"component_details\":[{\"component_id\":\"${COMPONENT_ID}\",\"package_type\":\"Docker\"}]}" \
+             -o xray-scan-report.json
+        if ! grep -q '"components"' xray-scan-report.json; then
+          echo "Xray summary does not contain expected data." >&2
+          cat xray-scan-report.json
           exit 1
         fi
 
@@ -92,7 +118,6 @@ jobs:
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add xray-scan-report.json
-
         if git diff --cached --quiet; then
           echo "No changes to commit."
         else
