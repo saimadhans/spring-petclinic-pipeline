@@ -56,16 +56,20 @@ jobs:
       run: |
         echo "$JFROG_PASSWORD" | docker login "$JFROG_REGISTRY" -u "$JFROG_USERNAME" --password-stdin
 
+    # ------------ push image and capture digest ------------
     - name: Push Docker image to JFrog Artifactory
+      id: push_image
       run: |
-        docker push "$JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest"
+        digest=$(docker push "$JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest" | awk '/^digest:/ {print $2}')
+        echo "DIGEST=$digest" >> "$GITHUB_ENV"
+        echo "Image digest: $digest"
 
-    # ---------- wait for Xray to finish scanning the image ----------
+    # ------------ wait for Xray to finish scanning the image ------------
     - name: Wait for Xray scan to finish
       env:
         XRAY_STATUS_URL: ${{ env.JFROG_URL }}/xray/api/v1/artifact/status
-        ARTIFACT_PATH:   default/${{ env.DOCKER_REPO }}/spring-petclinic/manifests/latest
       run: |
+        ARTIFACT_PATH="default/${DOCKER_REPO}/spring-petclinic/manifests/${DIGEST}"
         for i in {1..20}; do
           echo "Polling Xray scan status, attempt ${i}"
           if [ -n "$XRAY_PROJECT" ]; then
@@ -77,20 +81,20 @@ jobs:
                      "${PROJECT_HEADER[@]}" \
                      -H "Content-Type: application/json" \
                      -X POST "$XRAY_STATUS_URL" \
-                     -d "{\"path\":\"${ARTIFACT_PATH}\"}" | jq -r '.status')
-          echo "Current status: ${STATUS}"
-          if [ "${STATUS}" = "DONE" ]; then
+                     -d "{\"path\":\"${ARTIFACT_PATH}\"}" | jq -r '.status // empty')
+          echo "Current status: ${STATUS:-null}"
+          if [ "$STATUS" = "DONE" ]; then
             echo "Scan completed."
             break
           fi
           sleep 30
         done
-        if [ "${STATUS}" != "DONE" ]; then
+        if [ "$STATUS" != "DONE" ]; then
           echo "Xray scan did not finish in time." >&2
           exit 1
         fi
 
-    # ---------- download the finished component summary ----------
+    # ------------ download the finished component summary ------------
     - name: Download Xray scan summary
       env:
         XRAY_SUMMARY_URL: ${{ env.JFROG_URL }}/xray/api/v1/summary/component
