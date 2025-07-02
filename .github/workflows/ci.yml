@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write  
+  contents: write 
 
 jobs:
   build-and-deploy:
@@ -59,18 +59,29 @@ jobs:
       run: |
         docker push $JFROG_REGISTRY/$DOCKER_REPO/spring-petclinic:latest
 
-    - name: Download Xray scan summary
+    - name: Download Xray scan summary with retry
       run: |
-        curl -u $JFROG_USERNAME:$JFROG_PASSWORD \
-          -X POST "$JFROG_URL/xray/api/v2/summary/component" \
-          -H "Content-Type: application/json" \
-          -d '{
-            "component_details": [{
-              "component_id": "docker://'"$DOCKER_REPO/spring-petclinic:latest"'",
-              "package_type": "Docker"
-            }]
-          }' \
-          -o xray-scan-report.json
+        for i in {1..5}; do
+          echo "Attempt $i: Fetching Xray scan summary..."
+          curl -u "$JFROG_USERNAME:$JFROG_PASSWORD" \
+            -X POST "$JFROG_URL/xray/api/v2/summary/component" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"component_details\": [{
+                \"component_id\": \"docker://${DOCKER_REPO}/spring-petclinic:latest\",
+                \"package_type\": \"Docker\"
+              }]
+            }" \
+            -o xray-scan-report.json
+
+          if grep -q "summary" xray-scan-report.json; then
+            echo "Scan report is ready."
+            break
+          else
+            echo "Scan report not ready, waiting 15s..."
+            sleep 15
+          fi
+        done
 
     - name: Commit and push Xray scan report if it changed
       run: |
@@ -80,7 +91,6 @@ jobs:
         if git diff --cached --quiet; then
           echo "No changes to commit."
         else
-          git commit -m "Update Xray scan report"
+          git commit -m "Enhance pipeline with Xray scan summary retry"
           git push
         fi
-
