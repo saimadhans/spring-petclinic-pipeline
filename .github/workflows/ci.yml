@@ -12,11 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      JFROG_URL:        ${{ secrets.JFROG_URL }}        # e.g. https://trial38yi01.jfrog.io
+      JFROG_URL:        ${{ secrets.JFROG_URL }}        
       JFROG_USERNAME:   ${{ secrets.JFROG_USERNAME }}
       JFROG_PASSWORD:   ${{ secrets.JFROG_PASSWORD }}
-      MAVEN_REPO:       ${{ secrets.MAVEN_REPO }}       # e.g. libs-release-remote
-      DOCKER_REPO:      ${{ secrets.DOCKER_REPO }}      # e.g. docker-local
+      MAVEN_REPO:       ${{ secrets.MAVEN_REPO }}      
+      DOCKER_REPO:      ${{ secrets.DOCKER_REPO }}    
 
     steps:
     - name: Checkout code
@@ -74,16 +74,16 @@ jobs:
 
           if grep -q '"components"' xray-scan-report.json && \
              ! grep -q '"Component not found"' xray-scan-report.json; then
-            echo "✅  Scan report ready."
+            echo "Scan report ready."
             break
           fi
 
-          echo "⏳  Report not ready yet, waiting 30 s…"
+          echo "Report not ready yet, waiting 30s…"
           sleep 30
         done
 
         if ! grep -q '"components"' xray-scan-report.json ; then
-          echo "❌  Xray summary not available after 10 attempts." >&2
+          echo "Xray summary not available after 10 attempts." >&2
           exit 1
         fi
 
@@ -92,8 +92,10 @@ jobs:
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add xray-scan-report.json
+
         if git diff --cached --quiet; then
           echo "No changes to commit."
         else
-          git commit -m "chore: update Xray scan summary"
+          git commit -m "ci: update Xray scan summary"
           git push
+        fi
