@@ -14,7 +14,7 @@
     <mirror>
       <id>artifactory</id>
       <mirrorOf>*</mirrorOf>
-      <url>${env.JFROG_URL}/artifactory/ssm-maven-virtual</url>
+      <url>${env.JFROG_URL}/artifactory/ssm-maven-remote</url>
     </mirror>
   </mirrors>
 
