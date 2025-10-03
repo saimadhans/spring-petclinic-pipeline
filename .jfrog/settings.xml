@@ -12,7 +12,7 @@
     <mirror>
       <id>maven-remote</id> <!-- must match the server id -->
       <mirrorOf>central</mirrorOf>
-      <url>https://trial38yi01.jfrog.io/artifactory/maven-remote</url>
+      <url>https://soleng.jfrog.io/artifactory/ssm-maven-remote</url>
     </mirror>
   </mirrors>
 </settings>
