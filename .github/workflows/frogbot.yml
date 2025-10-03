@@ -31,7 +31,7 @@ jobs:
         # with:
         #   oidc-provider-name: ""
         env:
-          JF_URL: ${{ secrets.JF_URL }}
+          JF_URL: ${{ secrets.JFROG_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
           JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JF_GIT_BASE_BRANCH: ${{ matrix.branch }}    # For repository scan action
